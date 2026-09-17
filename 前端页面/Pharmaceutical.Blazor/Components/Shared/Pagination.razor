@@ -1,0 +1,17 @@
+@if (TotalPages > 1)
+{
+    <div class="pagination">
+        <button class="btn btn-secondary btn-sm" disabled="@(CurrentPage <= 1)" @onclick="() => OnPageChange.InvokeAsync(CurrentPage - 1)">上一页</button>
+        <span class="pagination-info">第 @CurrentPage / @TotalPages 页（共 @TotalCount 条）</span>
+        <button class="btn btn-secondary btn-sm" disabled="@(CurrentPage >= TotalPages)" @onclick="() => OnPageChange.InvokeAsync(CurrentPage + 1)">下一页</button>
+    </div>
+}
+
+@code {
+    [Parameter] public int CurrentPage { get; set; }
+    [Parameter] public int PageSize { get; set; }
+    [Parameter] public int TotalCount { get; set; }
+    [Parameter] public EventCallback<int> OnPageChange { get; set; }
+
+    private int TotalPages => PageSize > 0 ? (int)Math.Ceiling(TotalCount / (double)PageSize) : 1;
+}

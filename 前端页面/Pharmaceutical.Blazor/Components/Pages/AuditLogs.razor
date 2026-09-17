@@ -1,0 +1,98 @@
+@page "/audit-logs"
+@inject AuditApiService AuditApi
+@inject AuthStateService AuthState
+
+<PageTitle>审计日志</PageTitle>
+
+@if (!AuthState.IsAdmin)
+{
+    <div class="page-header"><h1>审计日志</h1><p>需要管理员权限</p></div>
+}
+else
+{
+    <div class="page-header">
+        <h1>审计日志</h1>
+        <p class="page-subtitle">不可变变更记录：谁、何时、改了什么（JSON diff）</p>
+    </div>
+
+    @if (_loadError != null)
+    {
+        <div class="alert alert-error">@_loadError</div>
+    }
+
+    <div class="card">
+        <div class="card-header toolbar">
+            <h2>最近变更 (@_logs.Count)</h2>
+            <button class="btn btn-secondary btn-sm" @onclick="Load" disabled="@_loading">刷新</button>
+        </div>
+        <div class="card-body table-wrapper">
+            @if (_loading) { <LoadingSpinner IsLoading="true" /> }
+            else if (!_logs.Any())
+            {
+                <div class="empty-state">暂无审计记录（发生增删改后自动记录）</div>
+            }
+            else
+            {
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>用户</th>
+                            <th>实体</th>
+                            <th>操作</th>
+                            <th>变更摘要</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var log in _logs)
+                        {
+                            <tr>
+                                <td>@log.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>@log.UserName</td>
+                                <td>@log.EntityType <span class="text-muted">(@log.EntityId)</span></td>
+                                <td><span class="badge badge-secondary">@log.Action</span></td>
+                                <td class="audit-cell">
+                                    @if (!string.IsNullOrEmpty(log.OldValues))
+                                    {
+                                        <details><summary>旧值</summary><pre>@log.OldValues</pre></details>
+                                    }
+                                    @if (!string.IsNullOrEmpty(log.NewValues))
+                                    {
+                                        <details><summary>新值</summary><pre>@log.NewValues</pre></details>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<AuditLogDto> _logs = new();
+    private bool _loading = true;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _logs = await AuditApi.GetRecentAsync(100);
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"加载失败：{ex.Message}";
+            _logs = new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

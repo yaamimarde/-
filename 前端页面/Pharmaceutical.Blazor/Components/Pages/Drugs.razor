@@ -1,0 +1,442 @@
+@page "/drugs"
+@inject DrugApiService DrugApi
+@inject SupplierApiService SupplierApi
+@inject ExportApiService ExportApi
+@inject AuthStateService AuthState
+@inject IJSRuntime JS
+
+<PageTitle>药品台账 - 药品管理综合系统</PageTitle>
+
+<div class="page-header">
+    <h1>药品台账全局工作台</h1>
+    <p class="page-subtitle">管理药品记录，支持录入、编辑与下架</p>
+</div>
+
+<AlertBanner Message="@_message" IsError="@_messageIsError" OnClose="() => _message = null" />
+
+@if (AuthState.CanOperate)
+{
+    <div class="card collapsible-card">
+        <div class="card-header clickable" @onclick="() => _formExpanded = !_formExpanded">
+            <h2>录入新药品</h2>
+            <span class="collapse-icon">@(_formExpanded ? "▲" : "▼")</span>
+        </div>
+        @if (_formExpanded)
+        {
+            <div class="card-body">
+                <EditForm Model="_newDrug" OnValidSubmit="HandleAddDrug">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>药品编号 *</label>
+                            <InputText @bind-Value="_newDrug.DrugId" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label>药品名称 *</label>
+                            <InputText @bind-Value="_newDrug.DrugName" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label>商品名</label>
+                            <InputText @bind-Value="_newDrug.TradeName" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label>规格</label>
+                            <InputText @bind-Value="_newDrug.Specification" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label>剂型</label>
+                            <InputText @bind-Value="_newDrug.DosageForm" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label>批准文号</label>
+                            <InputText @bind-Value="_newDrug.ApprovalNum" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label>储存条件</label>
+                            <InputText @bind-Value="_newDrug.StorageCond" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label>采购价</label>
+                            <InputNumber @bind-Value="_newDrug.PurchasePrice" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label>零售价</label>
+                            <InputNumber @bind-Value="_newDrug.RetailPrice" class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label>库存数量</label>
+                            <InputNumber @bind-Value="_newDrug.StockQuantity" class="form-control" />
+                            <small class="text-muted">仅首次录入可用；后续请通过「入库/出库」变更库存</small>
+                        </div>
+                        <div class="form-group">
+                            <label>供应商</label>
+                            <InputSelect @bind-Value="_newDrug.SupplierId" class="form-control">
+                                <option value="0">未选择</option>
+                                @foreach (var s in _suppliers)
+                                {
+                                    <option value="@s.SupplierId">@s.Name</option>
+                                }
+                            </InputSelect>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" disabled="@_submitting">录入药品</button>
+                        <button type="button" class="btn btn-secondary" @onclick="ResetForm">重置</button>
+                    </div>
+                </EditForm>
+            </div>
+        }
+    </div>
+}
+
+<div class="card">
+    <div class="card-header toolbar">
+        <h2>药品列表</h2>
+        <div class="toolbar-actions">
+            <InputSelect @bind-Value="_activeFilter" class="form-control filter-select" @bind-Value:after="OnActiveFilterChanged">
+                <option value="active">在售</option>
+                <option value="inactive">已下架</option>
+                <option value="all">全部</option>
+            </InputSelect>
+            <input type="search" class="search-input" placeholder="搜索药品名称或编号..."
+                   @bind="_searchText" @bind:event="oninput" @onkeyup="HandleSearchKeyUp" />
+            <button class="btn btn-secondary btn-sm" @onclick="LoadDrugs" disabled="@_loading">刷新</button>
+            <button class="btn btn-secondary btn-sm" @onclick="ExportDrugs" disabled="@_exporting">导出 CSV</button>
+        </div>
+    </div>
+    <div class="card-body table-wrapper">
+        <LoadingSpinner IsLoading="@_loading" Text="正在加载药品数据..." />
+        @if (!_loading && _loadError != null)
+        {
+            <div class="alert alert-error">@_loadError</div>
+        }
+        else if (!_loading && !_drugs.Any())
+        {
+            <div class="empty-state">暂无药品记录</div>
+        }
+        else if (!_loading)
+        {
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>编号</th>
+                        <th>名称</th>
+                        <th>规格</th>
+                        <th>库存</th>
+                        <th>采购价</th>
+                        <th>零售价</th>
+                        <th>供应商</th>
+                        <th>状态</th>
+                        @if (AuthState.CanOperate || AuthState.IsAdmin)
+                        {
+                            <th>操作</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var drug in _drugs)
+                    {
+                        var isLowStock = drug.StockQuantity < _lowStockThreshold;
+                        <tr class="@(isLowStock ? "row-low-stock" : "")">
+                            <td>
+                                <NavLink href="@($"/stock?drugId={Uri.EscapeDataString(drug.DrugId)}")" class="drug-id-link">@drug.DrugId</NavLink>
+                            </td>
+                            <td>@drug.DrugName</td>
+                            <td>@drug.Specification</td>
+                            <td class="@(isLowStock ? "text-danger fw-bold" : "")">@drug.StockQuantity</td>
+                            <td>@drug.PurchasePrice.ToString("F2")</td>
+                            <td>@drug.RetailPrice.ToString("F2")</td>
+                            <td>@(string.IsNullOrEmpty(drug.SupplierName) ? GetSupplierName(drug.SupplierId) : drug.SupplierName)</td>
+                            <td>
+                                @if (!drug.IsActive)
+                                {
+                                    <span class="badge badge-secondary">已下架</span>
+                                }
+                                else if (isLowStock)
+                                {
+                                    <span class="badge badge-danger">低库存</span>
+                                }
+                                else
+                                {
+                                    <span class="badge badge-success">在售</span>
+                                }
+                            </td>
+                            @if (AuthState.CanOperate || AuthState.IsAdmin)
+                            {
+                                <td class="action-cell">
+                                    @if (AuthState.CanOperate)
+                                    {
+                                        <button class="btn btn-secondary btn-sm" @onclick="() => OpenEdit(drug)">编辑</button>
+                                    }
+                                    @if (AuthState.IsAdmin && drug.IsActive)
+                                    {
+                                        <button class="btn btn-danger btn-sm" @onclick="() => ConfirmDelete(drug)"
+                                                disabled="@(_deletingId == drug.DrugId)">下架</button>
+                                    }
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <Pagination CurrentPage="@_page" PageSize="@_pageSize" TotalCount="@_totalCount" OnPageChange="HandlePageChange" />
+        }
+    </div>
+</div>
+
+@if (_deleteTarget != null)
+{
+    <div class="modal-overlay" @onclick="CancelDelete">
+        <div class="modal-dialog" @onclick:stopPropagation="true">
+            <h3>确认下架</h3>
+            <p>确定要下架药品 <strong>@_deleteTarget.DrugName</strong>（@_deleteTarget.DrugId）吗？</p>
+            <div class="modal-actions">
+                <button class="btn btn-danger" @onclick="HandleDelete">确认下架</button>
+                <button class="btn btn-secondary" @onclick="CancelDelete">取消</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_editDrug != null)
+{
+    <div class="modal-overlay" @onclick="CloseEdit">
+        <div class="modal-dialog modal-lg" @onclick:stopPropagation="true">
+            <h3>编辑药品 - @_editDrugId</h3>
+            <EditForm Model="_editDrug" OnValidSubmit="HandleUpdate">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>药品名称 *</label>
+                        <InputText @bind-Value="_editDrug.DrugName" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>商品名</label>
+                        <InputText @bind-Value="_editDrug.TradeName" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>规格</label>
+                        <InputText @bind-Value="_editDrug.Specification" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>剂型</label>
+                        <InputText @bind-Value="_editDrug.DosageForm" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>采购价</label>
+                        <InputNumber @bind-Value="_editDrug.PurchasePrice" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>零售价</label>
+                        <InputNumber @bind-Value="_editDrug.RetailPrice" class="form-control" />
+                    </div>
+                    <p class="text-muted">库存请通过「入库/出库」页面变更，不可直接编辑。</p>
+                    <div class="form-group">
+                        <label>供应商</label>
+                        <InputSelect @bind-Value="_editDrug.SupplierId" class="form-control">
+                            <option value="0">未选择</option>
+                            @foreach (var s in _suppliers)
+                            {
+                                <option value="@s.SupplierId">@s.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary" disabled="@_submitting">保存</button>
+                    <button type="button" class="btn btn-secondary" @onclick="CloseEdit">取消</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@code {
+    private List<DrugDto> _drugs = new();
+    private List<SupplierDto> _suppliers = new();
+    private DrugCreateDto _newDrug = new();
+    private DrugUpdateDto? _editDrug;
+    private string? _editDrugId;
+    private string _searchText = string.Empty;
+    private string? _message;
+    private bool _messageIsError;
+    private bool _loading = true;
+    private bool _submitting;
+    private bool _formExpanded = true;
+    private string? _loadError;
+    private string? _deletingId;
+    private DrugDto? _deleteTarget;
+    private int _page = 1;
+    private int _pageSize = 20;
+    private int _totalCount;
+    private int _lowStockThreshold = 200;
+    private string _activeFilter = "active";
+    private bool _exporting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _suppliers = await SupplierApi.GetAllAsync();
+        var settings = await DrugApi.GetAlertSettingsAsync();
+        if (settings != null) _lowStockThreshold = settings.LowStockThreshold;
+        await LoadDrugs();
+    }
+
+    private string GetSupplierName(int supplierId) =>
+        _suppliers.FirstOrDefault(s => s.SupplierId == supplierId)?.Name ?? supplierId.ToString();
+
+    private bool? GetActiveOnlyFilter() => _activeFilter switch
+    {
+        "active" => true,
+        "inactive" => false,
+        _ => null
+    };
+
+    private async Task OnActiveFilterChanged()
+    {
+        _page = 1;
+        await LoadDrugs();
+    }
+
+    private async Task LoadDrugs()
+    {
+        _loading = true;
+        _loadError = null;
+        StateHasChanged();
+
+        try
+        {
+            var (data, error) = await DrugApi.GetPagedAsync(_searchText, _page, _pageSize, GetActiveOnlyFilter());
+            if (data != null)
+            {
+                _drugs = data.Items;
+                _totalCount = data.TotalCount;
+                _page = data.Page;
+            }
+            else
+            {
+                _loadError = AuthStateService.IsAuthErrorMessage(error) ? null : error ?? "加载失败";
+                _drugs = new();
+            }
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"无法连接后端 API：{ex.Message}";
+            _drugs = new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task HandlePageChange(int page)
+    {
+        _page = page;
+        await LoadDrugs();
+    }
+
+    private async Task HandleSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            _page = 1;
+            await LoadDrugs();
+        }
+    }
+
+    private async Task HandleAddDrug()
+    {
+        _submitting = true;
+        _message = null;
+        try
+        {
+            var (success, msg) = await DrugApi.AddDrugAsync(_newDrug);
+            _message = msg;
+            _messageIsError = !success;
+            if (success)
+            {
+                ResetForm();
+                await LoadDrugs();
+            }
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private void ResetForm() => _newDrug = new DrugCreateDto();
+
+    private void OpenEdit(DrugDto drug)
+    {
+        _editDrugId = drug.DrugId;
+        _editDrug = new DrugUpdateDto
+        {
+            DrugName = drug.DrugName,
+            TradeName = drug.TradeName,
+            Specification = drug.Specification,
+            DosageForm = drug.DosageForm,
+            ApprovalNum = drug.ApprovalNum,
+            StorageCond = drug.StorageCond,
+            PurchasePrice = drug.PurchasePrice,
+            RetailPrice = drug.RetailPrice,
+            SupplierId = drug.SupplierId
+        };
+    }
+
+    private void CloseEdit()
+    {
+        _editDrug = null;
+        _editDrugId = null;
+    }
+
+    private async Task HandleUpdate()
+    {
+        if (_editDrug == null || _editDrugId == null) return;
+        _submitting = true;
+        try
+        {
+            var (success, msg) = await DrugApi.UpdateDrugAsync(_editDrugId, _editDrug);
+            _message = msg;
+            _messageIsError = !success;
+            if (success)
+            {
+                CloseEdit();
+                await LoadDrugs();
+            }
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private void ConfirmDelete(DrugDto drug) => _deleteTarget = drug;
+    private void CancelDelete() => _deleteTarget = null;
+
+    private async Task HandleDelete()
+    {
+        if (_deleteTarget == null) return;
+        _deletingId = _deleteTarget.DrugId;
+        try
+        {
+            var (success, msg) = await DrugApi.DeleteDrugAsync(_deleteTarget.DrugId);
+            _message = msg;
+            _messageIsError = !success;
+            if (success) await LoadDrugs();
+        }
+        finally
+        {
+            _deletingId = null;
+            _deleteTarget = null;
+        }
+    }
+
+    private async Task ExportDrugs()
+    {
+        _exporting = true;
+        var bytes = await ExportApi.DownloadDrugsAsync();
+        if (bytes != null)
+            await JS.InvokeVoidAsync("downloadFileFromBytes", "drugs.csv", Convert.ToBase64String(bytes));
+        else { _message = "导出失败"; _messageIsError = true; }
+        _exporting = false;
+    }
+}

@@ -1,0 +1,330 @@
+@page "/purchase-orders"
+@inject PurchaseOrderApiService PoApi
+@inject SupplierApiService SupplierApi
+@inject DrugApiService DrugApi
+@inject AuthStateService AuthState
+
+<PageTitle>采购单</PageTitle>
+
+<div class="page-header">
+    <h1>采购单管理</h1>
+    <p class="page-subtitle">低库存 → 采购单 → 审核 → 收货入库</p>
+</div>
+
+<AlertBanner Message="@_message" IsError="@_messageIsError" OnClose="() => _message = null" />
+
+@if (_loadError != null)
+{
+    <div class="alert alert-error">@_loadError</div>
+}
+
+@if (AuthState.CanOperate)
+{
+    <div class="card" style="margin-bottom:1rem">
+        <div class="card-body">
+            <label>从低库存一键生成：</label>
+            <InputSelect @bind-Value="_supplierId" class="form-control filter-select" style="display:inline-block">
+                @foreach (var s in _suppliers) { <option value="@s.SupplierId">@s.Name</option> }
+            </InputSelect>
+            <button class="btn btn-primary btn-sm" @onclick="CreateFromLowStock" disabled="@_submitting">生成采购单</button>
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem">
+        <div class="card-header"><h2>手动创建采购单</h2></div>
+        <div class="card-body">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>供应商</label>
+                    <InputSelect @bind-Value="_manualSupplierId" class="form-control">
+                        @foreach (var s in _suppliers) { <option value="@s.SupplierId">@s.Name</option> }
+                    </InputSelect>
+                </div>
+            </div>
+            <table class="data-table" style="margin-top:0.5rem">
+                <thead><tr><th>药品</th><th>数量</th><th></th></tr></thead>
+                <tbody>
+                    @for (var i = 0; i < _manualLines.Count; i++)
+                    {
+                        <PurchaseOrderLineEditor
+                            @key="i"
+                            Line="_manualLines[i]"
+                            Drugs="_supplierDrugs"
+                            OnRemove="() => RemoveLine(i)" />
+                    }
+                </tbody>
+            </table>
+            <div style="margin-top:0.5rem">
+                <button class="btn btn-secondary btn-sm" @onclick="AddLine">添加行</button>
+                <button class="btn btn-primary btn-sm" @onclick="CreateManual" disabled="@_submitting">创建采购单</button>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="card">
+    <div class="card-header toolbar">
+        <h2>采购单列表</h2>
+        <button class="btn btn-secondary btn-sm" @onclick="Load" disabled="@_loading">刷新</button>
+    </div>
+    <div class="card-body table-wrapper">
+        @if (_loading) { <LoadingSpinner IsLoading="true" /> }
+        else if (!_orders.Any())
+        {
+            <div class="empty-state">暂无采购单</div>
+        }
+        else
+        {
+            <table class="data-table">
+                <thead><tr><th>单号</th><th>供应商</th><th>状态</th><th>明细</th><th>创建人</th><th>操作</th></tr></thead>
+                <tbody>
+                    @foreach (var o in _orders)
+                    {
+                        <tr>
+                            <td>#@o.OrderId</td>
+                            <td>@o.SupplierName</td>
+                            <td><span class="badge @GetStatusBadge(o.Status)">@GetStatusLabel(o.Status)</span></td>
+                            <td>@string.Join("、", (o.Lines ?? Enumerable.Empty<PurchaseOrderLineDto>()).Select(l => $"{l.DrugName}×{l.Quantity}"))</td>
+                            <td>@o.CreatedBy</td>
+                            <td class="action-cell">
+                                @if (o.Status == "Draft" && AuthState.CanOperate)
+                                {
+                                    <button class="btn btn-sm btn-secondary" @onclick="() => Submit(o.OrderId)" disabled="@_submitting">提交</button>
+                                }
+                                @if (o.Status == "Pending" && AuthState.IsAdmin)
+                                {
+                                    <button class="btn btn-sm btn-primary" @onclick="() => Approve(o.OrderId)" disabled="@_submitting">审核</button>
+                                }
+                                @if (o.Status == "Approved" && AuthState.CanOperate)
+                                {
+                                    <button class="btn btn-sm btn-primary" @onclick="() => Receive(o.OrderId)" disabled="@_submitting">收货入库</button>
+                                }
+                                @if ((o.Status == "Draft" || o.Status == "Pending") && AuthState.CanOperate)
+                                {
+                                    <button class="btn btn-sm btn-danger" @onclick="() => Cancel(o.OrderId)" disabled="@_submitting">取消</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+@code {
+    private List<PurchaseOrderDto> _orders = new();
+    private List<SupplierDto> _suppliers = new();
+    private List<DrugDto> _allDrugs = new();
+    private int _supplierId;
+    private int _manualSupplierId;
+    private List<PurchaseOrderLineCreateDto> _manualLines = new() { new() };
+    private string? _message;
+    private bool _messageIsError;
+    private bool _loading = true;
+    private bool _submitting;
+    private string? _loadError;
+
+    private IEnumerable<DrugDto> _supplierDrugs =>
+        _allDrugs.Where(d => d.SupplierId == _manualSupplierId);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _suppliers = await SupplierApi.GetAllAsync();
+            if (_suppliers.Any())
+            {
+                _supplierId = _suppliers[0].SupplierId;
+                _manualSupplierId = _suppliers[0].SupplierId;
+            }
+            var (drugs, _) = await DrugApi.GetPagedAsync(null, 1, 500);
+            _allDrugs = drugs?.Items ?? new();
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"初始化失败：{ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task Load()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _orders = await PoApi.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"加载失败：{ex.Message}";
+            _orders = new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task CreateFromLowStock()
+    {
+        _submitting = true;
+        try
+        {
+            var (ok, msg) = await PoApi.CreateFromLowStockAsync(_supplierId);
+            _message = msg; _messageIsError = !ok;
+            if (ok) await Load();
+        }
+        catch (Exception ex)
+        {
+            _message = $"生成失败：{ex.Message}";
+            _messageIsError = true;
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private void AddLine() => _manualLines.Add(new PurchaseOrderLineCreateDto { Quantity = 10 });
+
+    private void RemoveLine(int index)
+    {
+        if (_manualLines.Count > 1) _manualLines.RemoveAt(index);
+    }
+
+    private async Task CreateManual()
+    {
+        var lines = _manualLines.Where(l => !string.IsNullOrEmpty(l.DrugId) && l.Quantity > 0).ToList();
+        if (lines.Count == 0)
+        {
+            _message = "请至少添加一行有效明细"; _messageIsError = true;
+            return;
+        }
+        _submitting = true;
+        try
+        {
+            var (ok, msg) = await PoApi.CreateAsync(new CreatePurchaseOrderDto
+            {
+                SupplierId = _manualSupplierId,
+                Lines = lines
+            });
+            _message = msg; _messageIsError = !ok;
+            if (ok) { _manualLines = new() { new PurchaseOrderLineCreateDto { Quantity = 10 } }; await Load(); }
+        }
+        catch (Exception ex)
+        {
+            _message = $"创建失败：{ex.Message}";
+            _messageIsError = true;
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private async Task Submit(int id)
+    {
+        _submitting = true;
+        try
+        {
+            var (ok, msg) = await PoApi.SubmitAsync(id);
+            if (!ok) { _message = msg; _messageIsError = true; }
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            _message = $"提交失败：{ex.Message}";
+            _messageIsError = true;
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private async Task Approve(int id)
+    {
+        _submitting = true;
+        try
+        {
+            var (ok, msg) = await PoApi.ApproveAsync(id);
+            if (!ok) { _message = msg; _messageIsError = true; }
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            _message = $"审核失败：{ex.Message}";
+            _messageIsError = true;
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private async Task Receive(int id)
+    {
+        _submitting = true;
+        try
+        {
+            var (ok, msg) = await PoApi.ReceiveAsync(id);
+            if (!ok) { _message = msg; _messageIsError = true; }
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            _message = $"收货失败：{ex.Message}";
+            _messageIsError = true;
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private async Task Cancel(int id)
+    {
+        _submitting = true;
+        try
+        {
+            var (ok, msg) = await PoApi.CancelAsync(id);
+            _message = msg; _messageIsError = !ok;
+            if (ok) await Load();
+        }
+        catch (Exception ex)
+        {
+            _message = $"取消失败：{ex.Message}";
+            _messageIsError = true;
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private static string GetStatusLabel(string status) => status switch
+    {
+        "Draft" => "草稿",
+        "Pending" => "待审核",
+        "Approved" => "已审核",
+        "Received" => "已收货",
+        "Cancelled" => "已取消",
+        _ => status
+    };
+
+    private static string GetStatusBadge(string status) => status switch
+    {
+        "Draft" => "badge-secondary",
+        "Pending" => "badge-warning",
+        "Approved" => "badge-success",
+        "Received" => "badge-success",
+        "Cancelled" => "badge-secondary",
+        _ => "badge-secondary"
+    };
+}

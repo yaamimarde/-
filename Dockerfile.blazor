@@ -1,0 +1,25 @@
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+WORKDIR /app
+EXPOSE 8080
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+COPY Pharmaceutical.Core/Pharmaceutical.Core.csproj Pharmaceutical.Core/
+COPY 前端页面/Pharmaceutical.Blazor/Pharmaceutical.Blazor.csproj 前端页面/Pharmaceutical.Blazor/
+
+RUN dotnet restore 前端页面/Pharmaceutical.Blazor/Pharmaceutical.Blazor.csproj
+
+COPY Pharmaceutical.Core/ Pharmaceutical.Core/
+COPY 前端页面/Pharmaceutical.Blazor/ 前端页面/Pharmaceutical.Blazor/
+
+RUN dotnet build 前端页面/Pharmaceutical.Blazor/Pharmaceutical.Blazor.csproj -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish 前端页面/Pharmaceutical.Blazor/Pharmaceutical.Blazor.csproj -c Release -o /app/publish /p:UseAppHost=false
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "Pharmaceutical.Blazor.dll"]

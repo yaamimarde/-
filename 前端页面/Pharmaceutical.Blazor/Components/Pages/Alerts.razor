@@ -1,0 +1,177 @@
+@page "/alerts"
+@inject DrugApiService DrugApi
+@inject ExportApiService ExportApi
+@inject PurchaseOrderApiService PoApi
+@inject AuthStateService AuthState
+@inject IJSRuntime JS
+
+<PageTitle>库存预警 - 药品管理综合系统</PageTitle>
+
+<div class="page-header">
+    <h1>智能库存预警看板</h1>
+    <p class="page-subtitle">监控库存低于安全线（@_threshold）的紧缺药品</p>
+</div>
+
+<AlertBanner Message="@_message" IsError="@_messageIsError" OnClose="() => _message = null" />
+
+@if (_poCreated)
+{
+    <div class="alert alert-success" style="margin-bottom:1rem">
+        采购单已生成。
+        <NavLink href="/purchase-orders" class="btn btn-sm btn-primary" style="margin-left:0.5rem">查看采购单</NavLink>
+    </div>
+}
+
+@if (_loadError != null)
+{
+    <div class="alert alert-error">@_loadError</div>
+}
+else if (_loading)
+{
+    <LoadingSpinner IsLoading="true" Text="正在加载预警数据..." />
+}
+else
+{
+    <div class="alert-stat-card">
+        <div class="stat-number">@_lowStockDrugs.Count</div>
+        <div class="stat-info">
+            <h2>低库存药品种类</h2>
+            <p>库存低于 @_threshold 的药品需及时补货，请通知采购人员处理。</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header toolbar">
+            <h2>预警明细</h2>
+            <div class="toolbar-actions">
+                @if (AuthState.CanOperate && _supplierIds.Any())
+                {
+                    <InputSelect @bind-Value="_poSupplierId" class="form-control filter-select">
+                        @foreach (var sid in _supplierIds)
+                        {
+                            <option value="@sid">供应商 #@sid（@GetSupplierName(sid)）</option>
+                        }
+                    </InputSelect>
+                    <button class="btn btn-primary btn-sm" @onclick="GeneratePo" disabled="@_generating">一键生成采购单</button>
+                }
+                <NavLink href="/purchase-orders" class="btn btn-secondary btn-sm">采购单管理</NavLink>
+                <button class="btn btn-secondary btn-sm" @onclick="ExportLowStock" disabled="@_exporting">导出 CSV</button>
+                <button class="btn btn-secondary btn-sm" @onclick="LoadAlerts">刷新</button>
+            </div>
+        </div>
+        <div class="card-body table-wrapper">
+            @if (!_lowStockDrugs.Any())
+            {
+                <div class="empty-state success-state">
+                    <span class="empty-icon">✓</span>
+                    当前无低库存药品，库存状况良好
+                </div>
+            }
+            else
+            {
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>药品名称</th>
+                            <th>规格</th>
+                            <th>当前库存</th>
+                            <th>供应商</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var drug in _lowStockDrugs)
+                        {
+                            <tr class="row-low-stock">
+                                <td>@drug.DrugName</td>
+                                <td>@drug.Specification</td>
+                                <td class="text-danger fw-bold">@drug.StockQuantity</td>
+                                <td>@drug.SupplierName</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<DrugDto> _lowStockDrugs = new();
+    private bool _loading = true;
+    private string? _loadError;
+    private string? _message;
+    private bool _messageIsError;
+    private int _threshold = 200;
+    private bool _exporting;
+    private bool _generating;
+    private bool _poCreated;
+    private int _poSupplierId;
+    private List<int> _supplierIds = new();
+
+    protected override async Task OnInitializedAsync() => await LoadAlerts();
+
+    private async Task LoadAlerts()
+    {
+        _loading = true;
+        _loadError = null;
+        StateHasChanged();
+
+        try
+        {
+            var settings = await DrugApi.GetAlertSettingsAsync();
+            if (settings != null) _threshold = settings.LowStockThreshold;
+            _lowStockDrugs = await DrugApi.GetLowStockDrugsAsync(_threshold);
+            _supplierIds = _lowStockDrugs.Select(d => d.SupplierId).Distinct().OrderBy(x => x).ToList();
+            if (_supplierIds.Any() && !_supplierIds.Contains(_poSupplierId))
+                _poSupplierId = _supplierIds[0];
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"无法加载预警数据：{ex.Message}";
+            _lowStockDrugs = new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private string GetSupplierName(int supplierId) =>
+        _lowStockDrugs.FirstOrDefault(d => d.SupplierId == supplierId)?.SupplierName ?? "";
+
+    private async Task GeneratePo()
+    {
+        _generating = true;
+        _poCreated = false;
+        var (ok, msg) = await PoApi.CreateFromLowStockAsync(_poSupplierId);
+        _message = ok ? msg : msg;
+        _messageIsError = !ok;
+        _poCreated = ok;
+        _generating = false;
+    }
+
+    private async Task ExportLowStock()
+    {
+        _exporting = true;
+        try
+        {
+            var bytes = await ExportApi.DownloadLowStockAsync();
+            if (bytes != null)
+                await JS.InvokeVoidAsync("downloadFileFromBytes", "low-stock.csv", Convert.ToBase64String(bytes));
+            else
+            {
+                _message = "导出失败，请检查 API 连接";
+                _messageIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _message = $"导出失败：{ex.Message}";
+            _messageIsError = true;
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+}

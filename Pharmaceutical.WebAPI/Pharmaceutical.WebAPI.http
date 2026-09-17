@@ -1,0 +1,21 @@
+@Pharmaceutical.WebAPI_HostAddress = http://localhost:5246
+
+GET {{Pharmaceutical.WebAPI_HostAddress}}/health
+Accept: application/json
+
+###
+
+GET {{Pharmaceutical.WebAPI_HostAddress}}/api/drug?page=1&pageSize=20
+Accept: application/json
+
+###
+
+POST {{Pharmaceutical.WebAPI_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "Admin@123"
+}
+
+###

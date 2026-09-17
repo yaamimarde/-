@@ -1,0 +1,19 @@
+<tr>
+    <td>
+        <InputSelect @bind-Value="Line.DrugId" class="form-control">
+            <option value="">请选择</option>
+            @foreach (var d in Drugs)
+            {
+                <option value="@d.DrugId">@d.DrugName (@d.DrugId)</option>
+            }
+        </InputSelect>
+    </td>
+    <td><InputNumber @bind-Value="Line.Quantity" class="form-control" /></td>
+    <td><button class="btn btn-sm btn-danger" @onclick="OnRemove">删除</button></td>
+</tr>
+
+@code {
+    [Parameter, EditorRequired] public PurchaseOrderLineCreateDto Line { get; set; } = default!;
+    [Parameter] public IEnumerable<DrugDto> Drugs { get; set; } = Enumerable.Empty<DrugDto>();
+    [Parameter] public EventCallback OnRemove { get; set; }
+}

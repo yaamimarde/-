@@ -1,0 +1,435 @@
+@page "/stock"
+@inject StockApiService StockApi
+@inject DrugApiService DrugApi
+@inject ExportApiService ExportApi
+@inject AuthStateService AuthState
+@inject IJSRuntime JS
+
+<PageTitle>库存流水 - 药品管理综合系统</PageTitle>
+
+<div class="page-header">
+    <h1>入库 / 出库管理</h1>
+    <p class="page-subtitle">批次入库 · FEFO 出库 · 调整/退货/报损 · 流水查询与导出</p>
+</div>
+
+<AlertBanner Message="@_message" IsError="@_messageIsError" OnClose="() => _message = null" />
+
+@if (AuthState.CanOperate)
+{
+    <div class="card">
+        <div class="card-header"><h2>库存操作</h2></div>
+        <div class="card-body">
+            <div class="stock-forms">
+                <EditForm Model="_stockIn" OnValidSubmit="HandleStockIn" class="stock-form-card">
+                    <h3>入库</h3>
+                    <div class="form-group">
+                        <label>药品</label>
+                        <InputSelect @bind-Value="_stockIn.DrugId" class="form-control">
+                            <option value="">请选择</option>
+                            @foreach (var d in _drugs)
+                            {
+                                <option value="@d.DrugId">@d.DrugName (@d.DrugId)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="form-group">
+                        <label>数量</label>
+                        <InputNumber @bind-Value="_stockIn.Quantity" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>批号（可选）</label>
+                        <InputText @bind-Value="_stockIn.BatchNumber" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>效期（可选）</label>
+                        <InputDate @bind-Value="_expiryDate" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>备注</label>
+                        <InputText @bind-Value="_stockIn.Remark" class="form-control" />
+                    </div>
+                    <button type="submit" class="btn btn-primary" disabled="@_submitting">确认入库</button>
+                </EditForm>
+
+                <EditForm Model="_stockOut" OnValidSubmit="HandleStockOut" class="stock-form-card">
+                    <h3>出库（FEFO）</h3>
+                    <div class="form-group">
+                        <label>药品</label>
+                        <InputSelect @bind-Value="_stockOut.DrugId" class="form-control">
+                            <option value="">请选择</option>
+                            @foreach (var d in _drugs)
+                            {
+                                <option value="@d.DrugId">@d.DrugName (库存:@d.StockQuantity)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="form-group">
+                        <label>数量</label>
+                        <InputNumber @bind-Value="_stockOut.Quantity" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>备注</label>
+                        <InputText @bind-Value="_stockOut.Remark" class="form-control" />
+                    </div>
+                    <button type="submit" class="btn btn-danger" disabled="@_submitting">确认出库</button>
+                </EditForm>
+
+                <EditForm Model="_stockAdjust" OnValidSubmit="HandleStockAdjust" class="stock-form-card">
+                    <h3>库存调整</h3>
+                    <p class="text-muted" style="font-size:0.85rem">正数盘盈，负数盘亏</p>
+                    <div class="form-group">
+                        <label>药品</label>
+                        <InputSelect @bind-Value="_stockAdjust.DrugId" class="form-control">
+                            <option value="">请选择</option>
+                            @foreach (var d in _drugs)
+                            {
+                                <option value="@d.DrugId">@d.DrugName (库存:@d.StockQuantity)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="form-group">
+                        <label>调整数量（±）</label>
+                        <InputNumber @bind-Value="_stockAdjust.Quantity" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>备注</label>
+                        <InputText @bind-Value="_stockAdjust.Remark" class="form-control" />
+                    </div>
+                    <button type="submit" class="btn btn-secondary" disabled="@_submitting">确认调整</button>
+                </EditForm>
+
+                <EditForm Model="_stockReturn" OnValidSubmit="HandleStockReturn" class="stock-form-card">
+                    <h3>退货入库</h3>
+                    <div class="form-group">
+                        <label>药品</label>
+                        <InputSelect @bind-Value="_stockReturn.DrugId" class="form-control">
+                            <option value="">请选择</option>
+                            @foreach (var d in _drugs)
+                            {
+                                <option value="@d.DrugId">@d.DrugName (@d.DrugId)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="form-group">
+                        <label>数量</label>
+                        <InputNumber @bind-Value="_stockReturn.Quantity" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>备注</label>
+                        <InputText @bind-Value="_stockReturn.Remark" class="form-control" />
+                    </div>
+                    <button type="submit" class="btn btn-primary" disabled="@_submitting">确认退货</button>
+                </EditForm>
+
+                <EditForm Model="_stockDamage" OnValidSubmit="HandleStockDamage" class="stock-form-card">
+                    <h3>报损</h3>
+                    <div class="form-group">
+                        <label>药品</label>
+                        <InputSelect @bind-Value="_stockDamage.DrugId" class="form-control">
+                            <option value="">请选择</option>
+                            @foreach (var d in _drugs)
+                            {
+                                <option value="@d.DrugId">@d.DrugName (库存:@d.StockQuantity)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="form-group">
+                        <label>数量</label>
+                        <InputNumber @bind-Value="_stockDamage.Quantity" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>备注</label>
+                        <InputText @bind-Value="_stockDamage.Remark" class="form-control" />
+                    </div>
+                    <button type="submit" class="btn btn-danger" disabled="@_submitting">确认报损</button>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="card" style="margin-top:1rem">
+    <div class="card-header toolbar">
+        <h2>批次查询</h2>
+        <div class="toolbar-actions">
+            <InputSelect @bind-Value="_batchDrugId" class="form-control filter-select" @bind-Value:after="LoadBatches">
+                <option value="">选择药品</option>
+                @foreach (var d in _drugs)
+                {
+                    <option value="@d.DrugId">@d.DrugName (@d.DrugId)</option>
+                }
+            </InputSelect>
+        </div>
+    </div>
+    <div class="card-body table-wrapper">
+        @if (string.IsNullOrEmpty(_batchDrugId))
+        {
+            <div class="empty-state">请选择药品查看批次</div>
+        }
+        else if (_batchesLoading)
+        {
+            <LoadingSpinner IsLoading="true" />
+        }
+        else if (!_batches.Any())
+        {
+            <div class="empty-state">该药品暂无批次记录</div>
+        }
+        else
+        {
+            <table class="data-table">
+                <thead><tr><th>批号</th><th>生产日期</th><th>效期</th><th>剩余天数</th><th>数量</th></tr></thead>
+                <tbody>
+                    @foreach (var b in _batches)
+                    {
+                        <tr>
+                            <td>@b.BatchNumber</td>
+                            <td>@b.ManufactureDate?.ToString("yyyy-MM-dd")</td>
+                            <td>@b.ExpiryDate.ToString("yyyy-MM-dd")</td>
+                            <td class="@(b.DaysUntilExpiry <= 30 ? "text-danger fw-bold" : "")">@b.DaysUntilExpiry</td>
+                            <td>@b.Quantity</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+<div class="card" style="margin-top:1rem">
+    <div class="card-header toolbar">
+        <h2>流水记录</h2>
+        <div class="toolbar-actions filter-bar">
+            <InputSelect @bind-Value="_filterDrugId" class="form-control filter-select">
+                <option value="">全部药品</option>
+                @foreach (var d in _drugs)
+                {
+                    <option value="@d.DrugId">@d.DrugName</option>
+                }
+            </InputSelect>
+            <InputSelect @bind-Value="_filterType" class="form-control filter-select">
+                <option value="">全部类型</option>
+                <option value="IN">入库</option>
+                <option value="OUT">出库</option>
+                <option value="ADJUST">调整</option>
+                <option value="RETURN">退货</option>
+                <option value="DAMAGE">报损</option>
+            </InputSelect>
+            <button class="btn btn-secondary btn-sm" @onclick="ApplyFilter">筛选</button>
+            <button class="btn btn-secondary btn-sm" @onclick="LoadData" disabled="@_loading">刷新</button>
+            <button class="btn btn-secondary btn-sm" @onclick="ExportTransactions" disabled="@_exporting">导出 CSV</button>
+        </div>
+    </div>
+    <div class="card-body table-wrapper">
+        <LoadingSpinner IsLoading="@_loading" />
+        @if (!_loading && _transactions.Any())
+        {
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>药品</th>
+                        <th>类型</th>
+                        <th>数量</th>
+                        <th>操作人</th>
+                        <th>备注</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in _transactions)
+                    {
+                        <tr>
+                            <td>@t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@t.DrugName (@t.DrugId)</td>
+                            <td><span class="badge @GetTypeBadgeClass(t.TransactionType)">@GetTypeLabel(t.TransactionType)</span></td>
+                            <td>@t.Quantity</td>
+                            <td>@t.Operator</td>
+                            <td>@t.Remark</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <Pagination CurrentPage="@_page" PageSize="@_pageSize" TotalCount="@_totalCount" OnPageChange="HandlePageChange" />
+        }
+        else if (!_loading)
+        {
+            <div class="empty-state">暂无流水记录</div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<StockTransactionDto> _transactions = new();
+    private List<DrugDto> _drugs = new();
+    private List<DrugBatchDto> _batches = new();
+    private StockInDto _stockIn = new();
+    private StockOutDto _stockOut = new();
+    private StockAdjustDto _stockAdjust = new();
+    private StockOutDto _stockReturn = new();
+    private StockOutDto _stockDamage = new();
+    private DateTime? _expiryDate = DateTime.Today.AddYears(2);
+    private string? _message;
+    private bool _messageIsError;
+    private bool _loading = true;
+    private bool _submitting;
+    private bool _exporting;
+    private bool _batchesLoading;
+    private int _page = 1;
+    private int _pageSize = 20;
+    private int _totalCount;
+    private string _filterDrugId = string.Empty;
+    private string _filterType = string.Empty;
+    private string _batchDrugId = string.Empty;
+
+    [SupplyParameterFromQuery(Name = "drugId")]
+    public string? QueryDrugId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(QueryDrugId))
+            _batchDrugId = QueryDrugId;
+        await LoadData();
+        if (!string.IsNullOrEmpty(_batchDrugId))
+            await LoadBatches();
+    }
+
+    private StockTransactionQueryDto BuildQuery() => new()
+    {
+        Page = _page,
+        PageSize = _pageSize,
+        DrugId = string.IsNullOrEmpty(_filterDrugId) ? null : _filterDrugId,
+        TransactionType = string.IsNullOrEmpty(_filterType) ? null : _filterType
+    };
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        try
+        {
+            var (data, err) = await StockApi.GetTransactionsAsync(BuildQuery());
+            if (data != null)
+            {
+                _transactions = data.Items;
+                _totalCount = data.TotalCount;
+                _page = data.Page;
+            }
+            else
+            {
+                _message = err; _messageIsError = true;
+            }
+            var (drugs, _) = await DrugApi.GetPagedAsync(null, 1, 500);
+            _drugs = drugs?.Items ?? new();
+        }
+        finally { _loading = false; }
+    }
+
+    private async Task LoadBatches()
+    {
+        if (string.IsNullOrEmpty(_batchDrugId))
+        {
+            _batches = new();
+            return;
+        }
+        _batchesLoading = true;
+        _batches = await StockApi.GetBatchesAsync(_batchDrugId);
+        _batchesLoading = false;
+    }
+
+    private async Task ApplyFilter()
+    {
+        _page = 1;
+        await LoadData();
+    }
+
+    private async Task HandlePageChange(int page)
+    {
+        _page = page;
+        await LoadData();
+    }
+
+    private async Task HandleStockIn()
+    {
+        if (string.IsNullOrEmpty(_stockIn.DrugId)) return;
+        _submitting = true;
+        _stockIn.ExpiryDate = _expiryDate;
+        var drugIdIn = _stockIn.DrugId;
+        var (success, msg) = await StockApi.StockInAsync(_stockIn);
+        _message = msg;
+        _messageIsError = !success;
+        if (success) { _stockIn = new(); _expiryDate = DateTime.Today.AddYears(2); await LoadData(); if (_batchDrugId == drugIdIn) await LoadBatches(); }
+        _submitting = false;
+    }
+
+    private async Task HandleStockOut()
+    {
+        if (string.IsNullOrEmpty(_stockOut.DrugId)) return;
+        _submitting = true;
+        var drugId = _stockOut.DrugId;
+        var (success, msg) = await StockApi.StockOutAsync(_stockOut);
+        _message = msg;
+        _messageIsError = !success;
+        if (success) { _stockOut = new(); await LoadData(); if (_batchDrugId == drugId) await LoadBatches(); }
+        _submitting = false;
+    }
+
+    private async Task HandleStockAdjust()
+    {
+        if (string.IsNullOrEmpty(_stockAdjust.DrugId) || _stockAdjust.Quantity == 0) return;
+        _submitting = true;
+        var drugId = _stockAdjust.DrugId;
+        var (success, msg) = await StockApi.StockAdjustAsync(_stockAdjust);
+        _message = msg;
+        _messageIsError = !success;
+        if (success) { _stockAdjust = new(); await LoadData(); if (_batchDrugId == drugId) await LoadBatches(); }
+        _submitting = false;
+    }
+
+    private async Task HandleStockReturn()
+    {
+        if (string.IsNullOrEmpty(_stockReturn.DrugId)) return;
+        _submitting = true;
+        var (success, msg) = await StockApi.StockReturnAsync(_stockReturn);
+        _message = msg;
+        _messageIsError = !success;
+        if (success) { _stockReturn = new(); await LoadData(); }
+        _submitting = false;
+    }
+
+    private async Task HandleStockDamage()
+    {
+        if (string.IsNullOrEmpty(_stockDamage.DrugId)) return;
+        _submitting = true;
+        var drugId = _stockDamage.DrugId;
+        var (success, msg) = await StockApi.StockDamageAsync(_stockDamage);
+        _message = msg;
+        _messageIsError = !success;
+        if (success) { _stockDamage = new(); await LoadData(); if (_batchDrugId == drugId) await LoadBatches(); }
+        _submitting = false;
+    }
+
+    private async Task ExportTransactions()
+    {
+        _exporting = true;
+        var bytes = await ExportApi.DownloadTransactionsAsync(BuildQuery());
+        if (bytes != null)
+            await JS.InvokeVoidAsync("downloadFileFromBytes", "transactions.csv", Convert.ToBase64String(bytes));
+        else { _message = "导出失败"; _messageIsError = true; }
+        _exporting = false;
+    }
+
+    private static string GetTypeLabel(string type) => type switch
+    {
+        "IN" => "入库",
+        "OUT" => "出库",
+        "ADJUST" => "调整",
+        "RETURN" => "退货",
+        "DAMAGE" => "报损",
+        _ => type
+    };
+
+    private static string GetTypeBadgeClass(string type) => type switch
+    {
+        "IN" or "RETURN" => "badge-success",
+        "OUT" or "DAMAGE" => "badge-danger",
+        _ => "badge-secondary"
+    };
+}

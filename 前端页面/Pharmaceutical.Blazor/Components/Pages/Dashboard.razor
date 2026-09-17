@@ -1,0 +1,190 @@
+@page "/dashboard"
+@inject DashboardApiService DashboardApi
+@inject AuthStateService AuthState
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>运营仪表盘</PageTitle>
+
+<div class="page-header">
+    <h1>运营仪表盘</h1>
+    <p class="page-subtitle">库存估值、动销分析与智能补货建议</p>
+</div>
+
+@if (_error != null)
+{
+    <div class="alert alert-error">@_error</div>
+}
+
+@if (_chartError != null)
+{
+    <div class="alert alert-error">@_chartError</div>
+}
+
+@if (_loading) { <LoadingSpinner IsLoading="true" Text="正在加载仪表盘..." /> }
+else if (_data != null)
+{
+    <div class="home-cards">
+        <div class="home-card">
+            <h3>库存总值</h3>
+            <p class="stat-number stat-primary">¥ @_data.TotalInventoryValue.ToString("N2")</p>
+        </div>
+        <NavLink href="/alerts" class="home-card alert-card">
+            <h3>低库存品种</h3>
+            <p class="stat-number">@_data.LowStockCount</p>
+            <span class="home-card-link">查看预警 →</span>
+        </NavLink>
+        <NavLink href="/expiry-alerts" class="home-card">
+            <h3>临期批次</h3>
+            <p class="stat-number">@_data.ExpiryAlertCount</p>
+            <span class="home-card-link">查看效期 →</span>
+        </NavLink>
+        <NavLink href="/drugs" class="home-card">
+            <h3>在售药品</h3>
+            <p class="stat-number stat-primary">@_data.ActiveDrugCount</p>
+            <span class="home-card-link">药品台账 →</span>
+        </NavLink>
+        <NavLink href="/purchase-orders" class="home-card">
+            <h3>待审采购单</h3>
+            <p class="stat-number">@_data.PendingPurchaseOrders</p>
+            <span class="home-card-link">采购单管理 →</span>
+        </NavLink>
+    </div>
+
+    <div class="quick-links">
+        <NavLink href="/alerts" class="btn btn-secondary btn-sm">低库存预警</NavLink>
+        <NavLink href="/expiry-alerts" class="btn btn-secondary btn-sm">效期预警</NavLink>
+        <NavLink href="/purchase-orders" class="btn btn-secondary btn-sm">采购单</NavLink>
+        <button class="btn btn-secondary btn-sm" @onclick="Load">刷新</button>
+    </div>
+
+    <div class="chart-row">
+        <div class="card chart-card">
+            <div class="card-header"><h2>运营概览</h2></div>
+            <div class="card-body chart-container">
+                <canvas id="kpiChart"></canvas>
+            </div>
+        </div>
+        <div class="card chart-card">
+            <div class="card-header"><h2>Top10 动销（30天）</h2></div>
+            <div class="card-body chart-container">
+                <canvas id="topMovingChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="card" style="margin-top:1rem">
+        <div class="card-header"><h2>智能补货建议</h2></div>
+        <div class="card-body table-wrapper">
+            @if (!_data.ReorderSuggestions.Any())
+            {
+                <div class="empty-state success-state">当前无需补货</div>
+            }
+            else
+            {
+                <table class="data-table">
+                    <thead><tr><th>药品</th><th>当前库存</th><th>日均出库</th><th>预计断货(天)</th><th>建议订货量</th><th>操作</th></tr></thead>
+                    <tbody>
+                        @foreach (var s in _data.ReorderSuggestions)
+                        {
+                            <tr class="@(s.DaysUntilStockout <= 7 ? "row-low-stock" : "")">
+                                <td>@s.DrugName</td>
+                                <td>@s.CurrentStock</td>
+                                <td>@s.DailyAverageOut</td>
+                                <td>@s.DaysUntilStockout</td>
+                                <td class="fw-bold">@s.SuggestedReorderQuantity</td>
+                                <td>
+                                    <NavLink href="/purchase-orders" class="btn btn-sm btn-primary">去采购</NavLink>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+}
+else if (!_loading)
+{
+    <div class="alert alert-error">@(_error ?? "无法加载仪表盘数据")</div>
+    <button class="btn btn-primary btn-sm" @onclick="Load">重试</button>
+    @if (!AuthState.IsAuthenticated)
+    {
+        <NavLink href="/login" class="btn btn-secondary btn-sm" style="margin-left:0.5rem">去登录</NavLink>
+    }
+}
+
+@code {
+    private DashboardDto? _data;
+    private bool _loading = true;
+    private string? _error;
+    private string? _chartError;
+    private bool _chartsRendered;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        _loading = true;
+        _error = null;
+        _chartError = null;
+        _chartsRendered = false;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        try
+        {
+            var (data, err) = await DashboardApi.GetDashboardAsync(cts.Token);
+            _data = data;
+            _error = err is not null && AuthStateService.IsAuthErrorMessage(err) && AuthState.SessionInvalidated
+                ? null
+                : err;
+        }
+        catch (OperationCanceledException)
+        {
+            _error = "加载超时，请重试";
+            _data = null;
+        }
+        catch (Exception ex)
+        {
+            _error = $"加载失败：{ex.Message}";
+            _data = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_data != null && !_chartsRendered && !_loading)
+        {
+            _chartsRendered = true;
+            await RenderCharts();
+        }
+    }
+
+    private async Task RenderCharts()
+    {
+        if (_data == null) return;
+
+        try
+        {
+            var kpiLabels = new[] { "低库存", "临期批次", "在售药品", "待审PO" };
+            var kpiValues = new[] { _data.LowStockCount, _data.ExpiryAlertCount, _data.ActiveDrugCount, _data.PendingPurchaseOrders };
+            await JS.InvokeVoidAsync("renderKpiChart", kpiLabels, kpiValues);
+
+            if (_data.TopMovingDrugs.Any())
+            {
+                var labels = _data.TopMovingDrugs.Select(d => d.DrugName).ToArray();
+                var values = _data.TopMovingDrugs.Select(d => d.TotalOutQuantity).ToArray();
+                await JS.InvokeVoidAsync("renderTopMovingChart", labels, values);
+            }
+        }
+        catch (Exception ex)
+        {
+            _chartError = $"图表渲染失败：{ex.Message}";
+        }
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}

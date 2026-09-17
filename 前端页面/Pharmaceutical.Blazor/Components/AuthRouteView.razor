@@ -1,0 +1,45 @@
+@inject AuthStateService AuthState
+@inject NavigationManager Navigation
+@inject ILogger<AuthRouteView> Logger
+@implements IDisposable
+
+<RouteView RouteData="RouteData" DefaultLayout="DefaultLayout" />
+<FocusOnNavigate RouteData="RouteData" Selector="h1" />
+
+@code {
+    [Parameter] public RouteData RouteData { get; set; } = default!;
+    [Parameter] public Type? DefaultLayout { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+        await CheckAuthAsync();
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await CheckAuthAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Auth check failed on navigation");
+            }
+        });
+    }
+
+    private async Task CheckAuthAsync()
+    {
+        await AuthState.WhenInitialized;
+
+        var path = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0];
+        var isLoginPage = path.Equals("login", StringComparison.OrdinalIgnoreCase);
+        if (!isLoginPage && !AuthState.IsAuthenticated)
+            Navigation.NavigateTo("/login", forceLoad: true);
+    }
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}

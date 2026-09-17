@@ -1,0 +1,137 @@
+@page "/expiry-alerts"
+@inject StockApiService StockApi
+@inject ExportApiService ExportApi
+@inject IJSRuntime JS
+
+<PageTitle>效期预警</PageTitle>
+
+<div class="page-header">
+    <h1>效期预警</h1>
+    <p class="page-subtitle">监控临期药品批次（FEFO 出库策略基础）</p>
+</div>
+
+<AlertBanner Message="@_message" IsError="@_messageIsError" OnClose="() => _message = null" />
+
+<div class="filter-tabs">
+    @foreach (var days in new[] { 30, 60, 90 })
+    {
+        <button class="btn btn-sm @(_withinDays == days ? "btn-primary" : "btn-secondary")"
+                @onclick="() => ChangeDays(days)">@days 天内</button>
+    }
+</div>
+
+@if (_loading) { <LoadingSpinner IsLoading="true" Text="正在加载..." /> }
+else if (_loadError != null)
+{
+    <div class="alert alert-error">@_loadError</div>
+}
+else
+{
+    <div class="card">
+        <div class="card-header toolbar">
+            <h2>临期批次 (@_alerts.Count)</h2>
+            <div class="toolbar-actions">
+                <button class="btn btn-secondary btn-sm" @onclick="ExportCsv" disabled="@_exporting">导出 CSV</button>
+                <button class="btn btn-secondary btn-sm" @onclick="Load">刷新</button>
+            </div>
+        </div>
+        <div class="card-body table-wrapper">
+            @if (!_alerts.Any())
+            {
+                <div class="empty-state success-state">@_withinDays 天内无临期批次</div>
+            }
+            else
+            {
+                <table class="data-table">
+                    <thead><tr><th>药品</th><th>批号</th><th>效期</th><th>剩余天数</th><th>数量</th><th>级别</th></tr></thead>
+                    <tbody>
+                        @foreach (var a in _alerts)
+                        {
+                            <tr class="@(a.AlertLevel == "紧急" ? "row-low-stock" : "")">
+                                <td>
+                                    <NavLink href="@($"/stock?drugId={Uri.EscapeDataString(a.DrugId)}")" class="drug-id-link">@a.DrugName</NavLink>
+                                </td>
+                                <td>@a.BatchNumber</td>
+                                <td>@a.ExpiryDate.ToString("yyyy-MM-dd")</td>
+                                <td class="@(a.DaysUntilExpiry <= 30 ? "text-danger fw-bold" : "")">@a.DaysUntilExpiry</td>
+                                <td>@a.Quantity</td>
+                                <td><span class="badge @(a.AlertLevel == "紧急" ? "badge-danger" : "badge-warning")">@a.AlertLevel</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<ExpiryAlertDto> _alerts = new();
+    private bool _loading = true;
+    private bool _exporting;
+    private string? _loadError;
+    private string? _message;
+    private bool _messageIsError;
+    private int _withinDays = 90;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task ChangeDays(int days)
+    {
+        _withinDays = days;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            var (data, err) = await StockApi.GetExpiryAlertsAsync(_withinDays);
+            if (err != null)
+            {
+                _loadError = AuthStateService.IsAuthErrorMessage(err) ? null : err;
+                _alerts = new();
+            }
+            else
+            {
+                _alerts = data;
+            }
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"加载失败：{ex.Message}";
+            _alerts = new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ExportCsv()
+    {
+        _exporting = true;
+        try
+        {
+            var bytes = await ExportApi.DownloadExpiryAlertsAsync(_withinDays);
+            if (bytes != null)
+                await JS.InvokeVoidAsync("downloadFileFromBytes", "expiry-alerts.csv", Convert.ToBase64String(bytes));
+            else
+            {
+                _message = "导出失败，请检查 API 连接";
+                _messageIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _message = $"导出失败：{ex.Message}";
+            _messageIsError = true;
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+}

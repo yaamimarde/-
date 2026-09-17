@@ -1,0 +1,82 @@
+@implements IDisposable
+
+<aside class="sidebar">
+    <div class="sidebar-brand">
+        <span class="brand-icon">+</span>
+        <div>
+            <div class="brand-title">药品管理综合系统</div>
+            <div class="brand-subtitle">Pharmaceutical Management</div>
+        </div>
+    </div>
+
+    @if (AuthState.IsAuthenticated)
+    {
+        <div class="sidebar-user">
+            <span>@AuthState.DisplayName</span>
+            <button class="btn-link" @onclick="HandleLogout">退出</button>
+        </div>
+    }
+
+    <nav class="sidebar-nav">
+        <NavLink href="/dashboard" class="nav-item">
+            <span class="nav-icon">▣</span> 运营仪表盘
+        </NavLink>
+        <NavLink href="/" Match="NavLinkMatch.All" class="nav-item">
+            <span class="nav-icon">⌂</span> 首页
+        </NavLink>
+        <NavLink href="/drugs" class="nav-item">
+            <span class="nav-icon">☷</span> 药品台账
+        </NavLink>
+        <NavLink href="/alerts" class="nav-item">
+            <span class="nav-icon">!</span> 库存预警
+        </NavLink>
+        <NavLink href="/expiry-alerts" class="nav-item">
+            <span class="nav-icon">⏱</span> 效期预警
+        </NavLink>
+        <NavLink href="/purchase-orders" class="nav-item">
+            <span class="nav-icon">📋</span> 采购单
+        </NavLink>
+        @if (AuthState.IsAdmin)
+        {
+            <NavLink href="/users" class="nav-item">
+                <span class="nav-icon">👤</span> 用户管理
+            </NavLink>
+            <NavLink href="/audit-logs" class="nav-item">
+                <span class="nav-icon">📜</span> 审计日志
+            </NavLink>
+        }
+        <NavLink href="/suppliers" class="nav-item">
+            <span class="nav-icon">◎</span> 供应商
+        </NavLink>
+        <NavLink href="/stock" class="nav-item">
+            <span class="nav-icon">↕</span> 入库出库
+        </NavLink>
+        @if (!AuthState.IsAuthenticated)
+        {
+            <NavLink href="/login" class="nav-item">
+                <span class="nav-icon">→</span> 登录
+            </NavLink>
+        }
+    </nav>
+</aside>
+
+@code {
+    [Inject] private AuthStateService AuthState { get; set; } = default!;
+    [Inject] private AuthApiService AuthApi { get; set; } = default!;
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+
+    protected override void OnInitialized()
+    {
+        AuthState.AuthChanged += OnAuthChanged;
+    }
+
+    private void OnAuthChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task HandleLogout()
+    {
+        await AuthApi.LogoutAsync();
+        Navigation.NavigateTo("/login");
+    }
+
+    public void Dispose() => AuthState.AuthChanged -= OnAuthChanged;
+}

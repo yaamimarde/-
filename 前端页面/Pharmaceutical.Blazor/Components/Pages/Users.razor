@@ -1,0 +1,151 @@
+@page "/users"
+@inject AuthApiService AuthApi
+@inject AuthStateService AuthState
+
+<PageTitle>用户管理</PageTitle>
+
+@if (!AuthState.IsAdmin)
+{
+    <p>需要管理员权限</p>
+}
+else
+{
+    <div class="page-header">
+        <h1>用户管理</h1>
+        <p class="page-subtitle">创建系统用户并分配角色</p>
+    </div>
+
+    <AlertBanner Message="@_message" IsError="@_messageIsError" OnClose="() => _message = null" />
+
+    <div class="card">
+        <div class="card-header"><h2>注册新用户</h2></div>
+        <div class="card-body">
+            <EditForm Model="_model" OnValidSubmit="HandleRegister">
+                <div class="form-grid">
+                    <div class="form-group"><label>用户名</label><InputText @bind-Value="_model.Username" class="form-control" /></div>
+                    <div class="form-group"><label>密码</label><InputText type="password" @bind-Value="_model.Password" class="form-control" /></div>
+                    <div class="form-group"><label>显示名</label><InputText @bind-Value="_model.DisplayName" class="form-control" /></div>
+                    <div class="form-group">
+                        <label>角色</label>
+                        <InputSelect @bind-Value="_model.Role" class="form-control">
+                            <option value="Viewer">Viewer</option>
+                            <option value="Operator">Operator</option>
+                            <option value="Admin">Admin</option>
+                        </InputSelect>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">创建用户</button>
+            </EditForm>
+        </div>
+    </div>
+
+    <div class="card" style="margin-top:1rem">
+        <div class="card-header toolbar">
+            <h2>用户列表</h2>
+            <button class="btn btn-secondary btn-sm" @onclick="LoadUsers" disabled="@_loading">刷新</button>
+        </div>
+        <div class="card-body table-wrapper">
+            @if (_loadError != null && !_loading)
+            {
+                <div class="alert alert-error">@_loadError</div>
+            }
+            @if (_loading) { <LoadingSpinner IsLoading="true" /> }
+            else if (!_users.Any())
+            {
+                <div class="empty-state">暂无用户</div>
+            }
+            else
+            {
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>用户名</th>
+                            <th>显示名</th>
+                            <th>角色</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var user in _users)
+                        {
+                            <tr>
+                                <td>@user.Username</td>
+                                <td>@user.DisplayName</td>
+                                <td>
+                                    <InputSelect TValue="string" Value="@user.Role" ValueChanged="@(r => HandleRoleChange(user, r))" ValueExpression="@(() => user.Role)" class="form-control filter-select">
+                                        <option value="Viewer">Viewer</option>
+                                        <option value="Operator">Operator</option>
+                                        <option value="Admin">Admin</option>
+                                    </InputSelect>
+                                </td>
+                                <td class="action-cell">
+                                    <button class="btn btn-sm btn-secondary" @onclick="() => HandleResetPassword(user)">重置密码</button>
+                                    <button class="btn btn-sm btn-danger" @onclick="() => HandleDelete(user)">删除</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private RegisterDto _model = new();
+    private List<UserDto> _users = new();
+    private string? _message;
+    private bool _messageIsError;
+    private bool _loading = true;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync() => await LoadUsers();
+
+    private async Task LoadUsers()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _users = await AuthApi.GetUsersAsync();
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"加载失败：{ex.Message}";
+            _users = new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task HandleRegister()
+    {
+        var (ok, msg) = await AuthApi.RegisterAsync(_model);
+        _message = msg; _messageIsError = !ok;
+        if (ok) { _model = new RegisterDto(); await LoadUsers(); }
+    }
+
+    private async Task HandleRoleChange(UserDto user, string role)
+    {
+        if (role == user.Role) return;
+        var (ok, msg) = await AuthApi.UpdateRoleAsync(user.Id, role);
+        _message = msg; _messageIsError = !ok;
+        if (ok) await LoadUsers();
+    }
+
+    private async Task HandleResetPassword(UserDto user)
+    {
+        var (ok, msg) = await AuthApi.ResetPasswordAsync(user.Id, "Reset@123");
+        _message = ok ? $"已重置 {user.Username} 的密码为 Reset@123" : msg;
+        _messageIsError = !ok;
+    }
+
+    private async Task HandleDelete(UserDto user)
+    {
+        var (ok, msg) = await AuthApi.DeleteUserAsync(user.Id);
+        _message = msg; _messageIsError = !ok;
+        if (ok) await LoadUsers();
+    }
+}

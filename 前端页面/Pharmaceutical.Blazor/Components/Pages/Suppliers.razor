@@ -1,0 +1,204 @@
+@page "/suppliers"
+@inject SupplierApiService SupplierApi
+@inject AuthStateService AuthState
+
+<PageTitle>供应商管理 - 药品管理综合系统</PageTitle>
+
+<div class="page-header">
+    <h1>供应商管理</h1>
+    <p class="page-subtitle">维护药品供应商信息</p>
+</div>
+
+<AlertBanner Message="@_message" IsError="@_messageIsError" OnClose="() => _message = null" />
+
+@if (_loadError != null)
+{
+    <div class="alert alert-error">@_loadError</div>
+}
+
+@if (AuthState.IsAdmin)
+{
+    <div class="card">
+        <div class="card-header"><h2>新增供应商</h2></div>
+        <div class="card-body">
+            <EditForm Model="_newSupplier" OnValidSubmit="HandleAdd">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>名称 *</label>
+                        <InputText @bind-Value="_newSupplier.Name" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>联系人</label>
+                        <InputText @bind-Value="_newSupplier.ContactPerson" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>电话</label>
+                        <InputText @bind-Value="_newSupplier.Phone" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>地址</label>
+                        <InputText @bind-Value="_newSupplier.Address" class="form-control" />
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary" disabled="@_submitting">添加供应商</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+<div class="card">
+    <div class="card-header toolbar">
+        <h2>供应商列表</h2>
+        <button class="btn btn-secondary btn-sm" @onclick="LoadSuppliers" disabled="@_loading">刷新</button>
+    </div>
+    <div class="card-body table-wrapper">
+        <LoadingSpinner IsLoading="@_loading" />
+        @if (!_loading && _suppliers.Any())
+        {
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>名称</th>
+                        <th>联系人</th>
+                        <th>电话</th>
+                        <th>地址</th>
+                        @if (AuthState.IsAdmin) { <th>操作</th> }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in _suppliers)
+                    {
+                        <tr>
+                            <td>@s.SupplierId</td>
+                            <td>@s.Name</td>
+                            <td>@s.ContactPerson</td>
+                            <td>@s.Phone</td>
+                            <td>@s.Address</td>
+                            @if (AuthState.IsAdmin)
+                            {
+                                <td class="action-cell">
+                                    <button class="btn btn-secondary btn-sm" @onclick="() => OpenEdit(s)">编辑</button>
+                                    <button class="btn btn-danger btn-sm" @onclick="() => HandleDelete(s.SupplierId)">删除</button>
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else if (!_loading)
+        {
+            <div class="empty-state">暂无供应商</div>
+        }
+    </div>
+</div>
+
+@if (_editSupplier != null)
+{
+    <div class="modal-overlay" @onclick="CloseEdit">
+        <div class="modal-dialog modal-lg" @onclick:stopPropagation="true">
+            <h3>编辑供应商</h3>
+            <EditForm Model="_editSupplier" OnValidSubmit="HandleUpdate">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>名称 *</label>
+                        <InputText @bind-Value="_editSupplier.Name" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>联系人</label>
+                        <InputText @bind-Value="_editSupplier.ContactPerson" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>电话</label>
+                        <InputText @bind-Value="_editSupplier.Phone" class="form-control" />
+                    </div>
+                    <div class="form-group">
+                        <label>地址</label>
+                        <InputText @bind-Value="_editSupplier.Address" class="form-control" />
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">保存</button>
+                    <button type="button" class="btn btn-secondary" @onclick="CloseEdit">取消</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@code {
+    private List<SupplierDto> _suppliers = new();
+    private SupplierCreateDto _newSupplier = new();
+    private SupplierUpdateDto? _editSupplier;
+    private int? _editId;
+    private string? _message;
+    private bool _messageIsError;
+    private bool _loading = true;
+    private bool _submitting;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync() => await LoadSuppliers();
+
+    private async Task LoadSuppliers()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _suppliers = await SupplierApi.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"加载失败：{ex.Message}";
+            _suppliers = new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task HandleAdd()
+    {
+        _submitting = true;
+        var (success, msg) = await SupplierApi.AddAsync(_newSupplier);
+        _message = msg;
+        _messageIsError = !success;
+        if (success) { _newSupplier = new(); await LoadSuppliers(); }
+        _submitting = false;
+    }
+
+    private void OpenEdit(SupplierDto s)
+    {
+        _editId = s.SupplierId;
+        _editSupplier = new SupplierUpdateDto
+        {
+            Name = s.Name,
+            ContactPerson = s.ContactPerson,
+            Phone = s.Phone,
+            Address = s.Address
+        };
+    }
+
+    private void CloseEdit() { _editSupplier = null; _editId = null; }
+
+    private async Task HandleUpdate()
+    {
+        if (_editSupplier == null || _editId == null) return;
+        var (success, msg) = await SupplierApi.UpdateAsync(_editId.Value, _editSupplier);
+        _message = msg;
+        _messageIsError = !success;
+        if (success) { CloseEdit(); await LoadSuppliers(); }
+    }
+
+    private async Task HandleDelete(int id)
+    {
+        var (success, msg) = await SupplierApi.DeleteAsync(id);
+        _message = msg;
+        _messageIsError = !success;
+        if (success) await LoadSuppliers();
+    }
+}

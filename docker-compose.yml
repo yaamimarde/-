@@ -1,0 +1,82 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: pharmaceutical-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-your_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-pharmaceutical}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: pharmaceutical-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  webapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pharmaceutical-webapi
+    ports:
+      - "5246:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "server=mysql;user=root;database=${MYSQL_DATABASE:-pharmaceutical};port=3306;password=${MYSQL_ROOT_PASSWORD:-your_password};"
+      ConnectionStrings__RedisConnection: "redis:6379"
+      JwtSettings__Secret: ${JWT_SECRET:-change-me-to-a-secure-random-key-at-least-32-chars}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    restart: on-failure
+
+  blazor:
+    build:
+      context: .
+      dockerfile: Dockerfile.blazor
+    container_name: pharmaceutical-blazor
+    ports:
+      - "5100:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ApiSettings__BaseUrl: "http://webapi:8080/"
+      DISABLE_HTTPS_REDIRECT: "true"
+    depends_on:
+      webapi:
+        condition: service_healthy
+    volumes:
+      - blazor_dp_keys:/root/.aspnet/DataProtection-Keys
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mysql_data:
+  blazor_dp_keys:
